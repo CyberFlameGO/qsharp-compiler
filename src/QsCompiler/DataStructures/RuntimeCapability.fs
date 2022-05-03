@@ -3,76 +3,96 @@
 
 namespace Microsoft.Quantum.QsCompiler
 
-#nowarn "44" // RuntimeCapabilities is deprecated.
+type ResultOpacity =
+    | Opaque
+    | Controlled
+    | Transparent
 
-open Microsoft.Quantum.QsCompiler.DataTypes
-open Microsoft.Quantum.QsCompiler.ReservedKeywords.AssemblyConstants
-open System
-open System.Runtime.CompilerServices
+module ResultOpacity =
+    [<CompiledName "Opaque">]
+    let opaque = Opaque
 
-/// The runtime capabilities supported by a quantum processor.
-[<NoComparison>]
+    [<CompiledName "Controlled">]
+    let controlled = Controlled
+
+    [<CompiledName "Transparent">]
+    let transparent = Transparent
+
+    let ofString name =
+        match name with
+        | "Opaque" -> Some Opaque
+        | "Controlled" -> Some Controlled
+        | "Transparent" -> Some Transparent
+        | _ -> None
+
+type ClassicalCapability =
+    | Empty
+    | Integral
+    | Full
+
+module ClassicalCapability =
+    [<CompiledName "Empty">]
+    let empty = Empty
+
+    [<CompiledName "Integral">]
+    let integral = Integral
+
+    [<CompiledName "Full">]
+    let full = Full
+
+    let ofString name =
+        match name with
+        | "Empty" -> Some Empty
+        | "Integral" -> Some Integral
+        | "Full" -> Some Full
+        | _ -> None
+
 type RuntimeCapability =
-    /// Measurement results cannot be compared for equality.
-    | BasicQuantumFunctionality
+    {
+        resultOpacity: ResultOpacity
+        classical: ClassicalCapability
+    }
 
-    /// Measurement results can be compared for equality only in if-statement conditional expressions in operations.
-    /// The block of an if-statement that depends on a result cannot contain set statements for mutable variables
-    /// declared outside the block, or return statements.
-    | BasicMeasurementFeedback
+    member capability.ResultOpacity = capability.resultOpacity
 
-    /// No runtime restrictions. Any Q# program can be executed.
-    | FullComputation
+    member capability.Classical = capability.classical
 
-    /// Returns true if having this runtime capability also implies having the given runtime capability.
-    member x.Implies y =
-        match x, y with
-        | BasicMeasurementFeedback, BasicQuantumFunctionality
-        | FullComputation, _ -> true
-        | _ -> x = y
+module RuntimeCapability =
+    [<CompiledName "Top">]
+    let top = { resultOpacity = Transparent; classical = Full }
 
-    /// Returns a runtime capability that implies both given capabilities.
-    static member Combine x y =
-        match x, y with
-        | BasicQuantumFunctionality, other
-        | other, BasicQuantumFunctionality -> other
-        | BasicMeasurementFeedback, BasicMeasurementFeedback -> BasicMeasurementFeedback
-        | FullComputation, _
-        | _, FullComputation -> FullComputation
+    [<CompiledName "Bottom">]
+    let bottom = { resultOpacity = Opaque; classical = Empty }
 
-    /// The base runtime capability is the identity element when combined with another capability. It is implied by
-    /// every other capability.
-    static member Base = BasicQuantumFunctionality
+    [<CompiledName "Merge">]
+    let merge c1 c2 =
+        { resultOpacity = max c1.resultOpacity c2.resultOpacity; classical = max c1.classical c2.classical }
 
-    /// Returns true if both runtime capabilities are equal.
-    static member op_Equality(a: RuntimeCapability, b: RuntimeCapability) = a = b
+    [<CompiledName "WithResultOpacity">]
+    let withResultOpacity opacity capability =
+        { capability with resultOpacity = opacity }
 
-    /// Parses the string as a runtime capability.
-    static member TryParse value =
-        // TODO: RELEASE 2021-04: Remove parsing for "QPRGen0", "QPRGen1", and "Unknown".
-        match value with
-        | "BasicQuantumFunctionality"
-        | "QPRGen0" -> Value BasicQuantumFunctionality
-        | "BasicMeasurementFeedback"
-        | "QPRGen1" -> Value BasicMeasurementFeedback
-        | "FullComputation"
-        | "Unknown" -> Value FullComputation
-        | _ -> Null
+    [<CompiledName "WithClassical">]
+    let withClassical classical capability =
+        { capability with classical = classical }
 
-    member this.Name =
-        match this with
-        | BasicQuantumFunctionality -> "BasicQuantumFunctionality"
-        | BasicMeasurementFeedback -> "BasicMeasurementFeedback"
-        | FullComputation -> "FullComputation"
+    // TODO: Need to know the target architecture to choose between Empty and Integral.
+    let names =
+        Map [ "BasicExecution", { resultOpacity = Opaque; classical = Empty }
+              "BasicQuantumFunctionality", { resultOpacity = Opaque; classical = Full }
+              "AdaptiveExecution", { resultOpacity = Controlled; classical = Empty }
+              "BasicMeasurementFeedback", { resultOpacity = Controlled; classical = Full }
+              "FullComputation", { resultOpacity = Transparent; classical = Full } ]
 
-// TODO: RELEASE 2021-04: Remove RuntimeCapabilitiesExtensions.
-[<Extension>]
-[<Obsolete "Use Microsoft.Quantum.QsCompiler.RuntimeCapability.">]
-module RuntimeCapabilitiesExtensions =
-    [<Extension>]
-    [<Obsolete "Use Microsoft.Quantum.QsCompiler.RuntimeCapability.">]
-    let ToCapability capabilities =
-        match capabilities with
-        | RuntimeCapabilities.QPRGen0 -> BasicQuantumFunctionality
-        | RuntimeCapabilities.QPRGen1 -> BasicMeasurementFeedback
-        | _ -> FullComputation
+    [<CompiledName "Name">]
+    let name capability =
+        Map.tryFindKey (fun _ -> (=) capability) names
+
+    [<CompiledName "FromString">]
+    let ofString name = Map.tryFind name names
+
+type RuntimeCapability with
+    member capability.Name = RuntimeCapability.name capability |> Option.toObj
+
+    static member Parse name =
+        RuntimeCapability.ofString name |> Option.defaultValue Unchecked.defaultof<_>
